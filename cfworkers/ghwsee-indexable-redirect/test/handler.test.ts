@@ -20,6 +20,16 @@ describe('handle', () => {
     expect(result.headers.has('Last-Modified')).toBeFalsy()
   })
 
+  test('returns 451 for a legally blocked repo', async () => {
+    const request_url = `https://github-wiki-see.page/m/mms75/sfz/wiki`
+    const result = await handleRequest(
+      new Request(request_url, { method: 'GET' }),
+    )
+
+    expect(result.status).toEqual(451)
+    expect(await result.text()).toContain('mms75/sfz')
+  })
+
   test('can determine if a URL is not indexable', async () => {
     const url = new URL('https://github.com/commaai/openpilot/wiki')
     expect(await (await originalInfo(url)).indexable).toBeFalsy()
@@ -110,6 +120,5 @@ describe('handle', () => {
     expect(result.headers.get('location')).toEqual(
       'https://github-wiki-see.page/m/node-config/node-config/wiki',
     )
-    
   })
 })

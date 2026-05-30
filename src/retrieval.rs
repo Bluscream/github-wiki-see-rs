@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use thiserror::Error;
 
 use crate::decommission::DECOMMISSION_LIST;
+use crate::legal_block::LEGAL_BLOCK_LIST;
 use crate::scraper::process_html_index;
 
 #[allow(dead_code)]
@@ -31,6 +32,8 @@ pub enum ContentError {
     TooMayRequests,
     #[error("wiki has been decommissioned")]
     Decommissioned,
+    #[error("unavailable for legal reasons")]
+    UnavailableForLegalReasons,
     #[error("{0}")]
     OtherError(String),
 }
@@ -43,6 +46,19 @@ static WIKI_BODY_SELECTOR: LazyLock<Selector> =
 
 fn repo_slug(account: &str, repository: &str) -> String {
     format!("{account}/{repository}")
+}
+
+fn reject_blocked_repo(account: &str, repository: &str) -> Result<(), ContentError> {
+    let repo = repo_slug(account, repository);
+    if LEGAL_BLOCK_LIST.contains(repo.as_str()) {
+        return Err(ContentError::UnavailableForLegalReasons);
+    }
+
+    if DECOMMISSION_LIST.contains(repo.as_str()) {
+        return Err(ContentError::Decommissioned);
+    }
+
+    Ok(())
 }
 
 fn raw_wiki_source_url(account: &str, repository: &str, page: &str, extension: &str) -> String {
@@ -93,10 +109,7 @@ pub async fn retrieve_source_file(
     page: &str,
     client: &Client,
 ) -> Result<Content, ContentError> {
-    // Skip decommissioned wikis
-    if DECOMMISSION_LIST.contains(repo_slug(account, repository).as_str()) {
-        return Err(ContentError::Decommissioned);
-    }
+    reject_blocked_repo(account, repository)?;
 
     match retrieve_source_file_extension(account, repository, page, client, Content::Markdown, "md")
         .await
@@ -183,6 +196,8 @@ pub async fn retrieve_wiki_index(
     repository: &str,
     client: &Client,
 ) -> Result<Content, ContentError> {
+    reject_blocked_repo(account, repository)?;
+
     let html = with_rate_limit_fallback(|domain| async move {
         retrieve_github_com_html(account, repository, "", client, domain).await
     })
@@ -208,6 +223,8 @@ pub async fn retrieve_wiki_sitemap_index(
     repository: &str,
     client: &Client,
 ) -> Result<String, ContentError> {
+    reject_blocked_repo(account, repository)?;
+
     let html = with_rate_limit_fallback(|domain| async move {
         retrieve_github_com_html(account, repository, "", client, domain).await
     })
@@ -366,6 +383,28 @@ mod tests {
 
         println!("{content:?}");
         assert!(content.is_ok());
+    }
+
+    #[tokio::test]
+    async fn legal_block_source_file() {
+        let client = Client::new();
+        let content = retrieve_source_file("mms75", "sfz", "Home", &client).await;
+
+        assert!(matches!(
+            content,
+            Err(ContentError::UnavailableForLegalReasons)
+        ));
+    }
+
+    #[tokio::test]
+    async fn legal_block_wiki_index() {
+        let client = Client::new();
+        let content = retrieve_wiki_index("mms75", "sfz", &client).await;
+
+        assert!(matches!(
+            content,
+            Err(ContentError::UnavailableForLegalReasons)
+        ));
     }
 
     #[tokio::test]

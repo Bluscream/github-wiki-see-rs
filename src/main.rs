@@ -16,6 +16,7 @@ use crate::scraper::process_markdown;
 
 mod decommission;
 mod gh_extensions;
+mod legal_block;
 mod retrieval;
 mod scraper;
 
@@ -152,7 +153,16 @@ async fn wiki_debug_sitemaps(
 ) -> Result<content::RawXml<String>, status::Custom<String>> {
     let content = retrieve_wiki_sitemap_index(account, repository, client)
         .await
-        .map_err(|error| status::Custom(Status::InternalServerError, format!("Error: {error}")))?;
+        .map_err(|error| {
+            let status = match error {
+                retrieval::ContentError::UnavailableForLegalReasons => {
+                    Status::UnavailableForLegalReasons
+                }
+                _ => Status::InternalServerError,
+            };
+
+            status::Custom(status, format!("Error: {error}"))
+        })?;
 
     Ok(content::RawXml(content))
 }
@@ -171,6 +181,7 @@ struct MirrorTemplate {
 enum MirrorError {
     // DocumentNotFound(NotFound<MirrorTemplate>),
     InternalError(status::Custom<content::RawHtml<String>>),
+    UnavailableForLegalReasons(status::Custom<content::RawHtml<String>>),
     GiveUpSendToGitHub(Redirect),
 }
 
@@ -184,6 +195,15 @@ fn mirror_internal_error(template: MirrorTemplate) -> MirrorError {
             ))
         });
     MirrorError::InternalError(status::Custom(Status::InternalServerError, rendered))
+}
+
+fn mirror_unavailable_for_legal_reasons(account: &str, repository: &str) -> MirrorError {
+    MirrorError::UnavailableForLegalReasons(status::Custom(
+        Status::UnavailableForLegalReasons,
+        content::RawHtml(format!(
+            "451 Unavailable For Legal Reasons - {account}/{repository} is unavailable on this service."
+        )),
+    ))
 }
 
 #[get("/<account>/<repository>/wiki")]
@@ -290,6 +310,9 @@ async fn mirror_page(
             ContentError::Decommissioned => {
                 GiveUpSendToGitHub(Redirect::permanent(original_url_encoded.clone()))
             }
+            ContentError::UnavailableForLegalReasons => {
+                mirror_unavailable_for_legal_reasons(account, repository)
+            }
             ContentError::OtherError(e) => mirror_internal_error(MirrorTemplate {
                 original_title: page_title.clone(),
                 original_url: original_url.clone(),
@@ -360,6 +383,9 @@ async fn mirror_page_index(
             // Not used, but could be if index is decommisioned
             ContentError::Decommissioned => {
                 GiveUpSendToGitHub(Redirect::permanent(original_url.clone()))
+            }
+            ContentError::UnavailableForLegalReasons => {
+                mirror_unavailable_for_legal_reasons(account, repository)
             }
             ContentError::OtherError(e) => mirror_internal_error(MirrorTemplate {
                 original_title: page_title.clone(),

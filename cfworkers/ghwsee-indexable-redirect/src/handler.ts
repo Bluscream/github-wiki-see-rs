@@ -4,6 +4,31 @@ interface OriginalInfo {
   moved_to?: string
 }
 
+const LEGAL_BLOCK_REPOS = new Set(['mms75/sfz'])
+
+function repoSlugFromPathComponents(
+  pathComponents: string[],
+): string | undefined {
+  if (pathComponents.length < 3) {
+    return undefined
+  }
+
+  return `${pathComponents[1]}/${pathComponents[2]}`.toLowerCase()
+}
+
+function legalBlockResponse(repoSlug: string): Response {
+  return new Response(
+    `451 Unavailable For Legal Reasons - ${repoSlug} is unavailable on this service.`,
+    {
+      status: 451,
+      statusText: 'Unavailable For Legal Reasons',
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+      },
+    },
+  )
+}
+
 class ModifiedDateAppender implements HTMLRewriterElementContentHandlers {
   date: Date
 
@@ -23,14 +48,18 @@ export async function handleRequest(request: Request): Promise<Response> {
     request.url.replace('github-wiki-see.page/m', 'github.com'),
   )
 
+  const pathComponents = githubUrl.pathname.split('/')
+  const repoSlug = repoSlugFromPathComponents(pathComponents)
+  if (repoSlug && LEGAL_BLOCK_REPOS.has(repoSlug)) {
+    return legalBlockResponse(repoSlug)
+  }
+
   const ghwseeResponse = fetch(request, {
     cf: {
       cacheEverything: true,
       cacheTtl: 7200,
     },
   })
-
-  const pathComponents = githubUrl.pathname.split('/')
 
   // Don't redirect wiki_index path. Index that, even for indexable wikis.
   if (pathComponents.length > 3 && pathComponents[2] === 'wiki_index') {
